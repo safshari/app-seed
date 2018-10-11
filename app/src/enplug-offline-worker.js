@@ -18,7 +18,7 @@
  *     after which time (in minutes), given response should be refreshed. Time set to 0 means that
  *     a given response should never be cached.
  */
-var config = {"staticResources":["./","./enplug-offline-worker.js","./index.html","https://apps.enplug.com/sdk/v1/player.js","runtime.6afe30102d8fe7337431.js","polyfills.b4a8dbdd923d69a735b8.js","main.66b9e518b4fd17f5606c.js","styles.34c57ab7888ec1573f9c.css"],"noCorsUrls":["google-analytics.com"],"refreshUrls":{},"appName":"player-app","cacheVersion":"player-app-1-1-0","noCacheUrls":[]};
+var config = {"staticResources":["./","./enplug-offline-worker.js","./index.html","https://apps.enplug.com/sdk/v1/player.js","runtime.js","polyfills.js","styles.js","vendor.js","main.js"],"noCorsUrls":["google-analytics.com"],"refreshUrls":{},"appName":"player-app","cacheVersion":"player-app-1-1-0-12966-8","noCacheUrls":[]};
 
 // End of config. There shouldn't be any need to edit code below.
 
@@ -48,7 +48,9 @@ self.addEventListener('install', function (event) {
       .then((text) => {
         try {
           refreshTime = text ? JSON.parse(text) : {};
+          console.debug('!!!!!!refresh time fetched', refreshTime);
         } catch (e) {
+          console.debug('!!!!no refresh time', text);
           refreshTime = {};
         }
       });
@@ -88,7 +90,12 @@ self.addEventListener('fetch', (event) => {
 
   // Get rid of the app token to generalize URL for caching. Having unique URLs for each request
   // will only make the cache get bigger over time.
-  var cacheUrl = event.request.url.replace(/\?.*/g, '')
+  var cacheUrl = event.request.url.replace(/\?apptoken.*/g, '');
+
+  if (cacheUrl.startsWith('blob:') || cacheUrl.endsWith('.mp4')) {
+    console.log(`[player-app|offline] Caching prevented: URL starts with blob:// or ends with .mp4.`);
+    return false;
+  }
 
   for (const noCacheUrl of config.noCacheUrls) {
     if (event.request.url.indexOf(noCacheUrl) >= 0) {
@@ -100,6 +107,7 @@ self.addEventListener('fetch', (event) => {
     mode: 'cors'
   });
 
+
   // We need to explicitly change the reqest to CORS request so that cross-domain resources
   // get properly cached.
   var fetchRequest = new Request(event.request.url, {
@@ -109,6 +117,9 @@ self.addEventListener('fetch', (event) => {
     mode: 'no-cors'
   });
 
+  var lastRefreshTime = refreshTime[cacheUrl] || 0;
+  console.debug('LAST REFRESH', lastRefreshTime);
+
 
   var response = caches.match(cacheRequest).then((cachedResponse) => {
     // IMPORTANT: Clone the request.
@@ -117,8 +128,10 @@ self.addEventListener('fetch', (event) => {
 
     // Request data can't be refreshed. Return cached version of the request response.
     if (cachedResponse && !canUrlBeRefreshed(cacheUrl)) {
+      console.debug('returning cached', cachedResponse);
       return cachedResponse;
     }
+
 
     // URL can be refreshed. Fetch and cache new data.
     return new Promise((resolve, reject) => {
@@ -129,6 +142,7 @@ self.addEventListener('fetch', (event) => {
             (response.type !== 'basic' && response.type !== 'cors')) {
             if (cachedResponse) {
               // Check if we have a valid cached response. If so, return it.
+              console.debug('returning cached inside fetch', cachedResponse);
               return cachedResponse;
             } else {
               // No valid cached data. Simply return response. This will ensure we don't
@@ -150,6 +164,13 @@ self.addEventListener('fetch', (event) => {
             // Cache response and update the time of caching this particular request.
             (cache) => {
               console.log(`[player-app|offline] Caching ${cacheUrl}.`);
+
+              cacheRequest.timestamp = Date.now();
+              cacheRequest.headers.timestamp = Date.now();
+              responseToCache.timestamp = Date.now();
+              responseToCache.headers.timestamp = Date.now();
+              console.debug('MOD REQUEST CACHING', cacheRequest);
+
               cache.put(cacheRequest, responseToCache);
               setCachedTime(cacheUrl);
             },
@@ -206,6 +227,7 @@ function canUrlBeRefreshed(url) {
   // Check whether appropriate amount of time ellapsed since last refresh
   var currentTime = Date.now();
   var lastRefreshTime = refreshTime[url] || 0;
+  console.debug('LAST REFRESH', lastRefreshTime);
   hasRequiredTimePassed = currentTime - lastRefreshTime >= refreshInterval;
 
   return isWhitelisted && hasRequiredTimePassed;
